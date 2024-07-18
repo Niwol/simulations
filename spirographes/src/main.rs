@@ -97,10 +97,8 @@ impl Spirographe {
         self.points.push([pencil_pos.x, pencil_pos.y, 0.0]);
 
         let next_color = Color::hsv(self.hue, 1.0, 1.0).to_srgba();
-        println!("{}", self.hue);
 
         let next_color = [next_color.red, next_color.green, next_color.blue, 1.0];
-        println!("{:?}", next_color);
 
         self.colors.push(next_color);
 
