@@ -12,7 +12,14 @@ const CELL_SIZE: usize = 32;
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                canvas: Some(String::from("#game-canvas")),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }))
+        // .add_plugins(DefaultPlugins)
         .add_plugins(EguiPlugin)
         .add_event::<ResetMazeEvent>()
         .init_resource::<MazeConfig>()
@@ -90,7 +97,7 @@ fn ui(
 struct Maze {
     cells: Vec<Cell>,
     width: usize,
-    _height: usize,
+    height: usize,
     stack: Vec<UVec2>,
 }
 
@@ -107,6 +114,19 @@ struct Walls {
     down: Option<Entity>,
     left: Option<Entity>,
     right: Option<Entity>,
+}
+
+#[derive(Clone, Copy)]
+struct Step {
+    from_coord: UVec2,
+    to_coord: UVec2,
+    opend_walls: bool,
+}
+
+impl Step {
+    fn direction(&self) -> Direction {
+        Direction::from_coords(self.from_coord, self.to_coord)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,26 +147,172 @@ impl Default for MazeConfig {
     }
 }
 
-impl Maze {
-    fn step(&mut self) -> Option<Direction> {
-        if self.stack.is_empty() {
-            return None;
+impl Direction {
+    fn to_coord(&self) -> IVec2 {
+        match self {
+            Direction::Up => IVec2::Y,
+            Direction::Down => IVec2::NEG_Y,
+            Direction::Left => IVec2::NEG_X,
+            Direction::Right => IVec2::X,
         }
-
-        let coord = self.stack.pop().unwrap();
-
-        None
     }
 
-    fn current_cell(&self) -> Cell {
-        let coord = self.stack.last().unwrap_or(&UVec2::ZERO);
-        let idx = coord_to_idx(*coord, self.width);
+    fn from_coords(from: UVec2, to: UVec2) -> Self {
+        let vec = to.as_ivec2() - from.as_ivec2();
 
-        self.cells[idx]
+        match vec {
+            IVec2::Y => Direction::Up,
+            IVec2::NEG_Y => Direction::Down,
+            IVec2::NEG_X => Direction::Left,
+            IVec2::X => Direction::Right,
+
+            _ => panic!("coord vectors were not adjacent"),
+        }
+    }
+}
+
+impl Maze {
+    fn step(&mut self) -> Step {
+        self.mark_current_cell();
+
+        let current_coord = *self.stack.last().unwrap();
+
+        let directions = [
+            Direction::Up,
+            Direction::Down,
+            Direction::Left,
+            Direction::Right,
+        ]
+        .into_iter()
+        .filter(|direction| {
+            let dir = direction.to_coord();
+
+            let new_coord = dir + current_coord.as_ivec2();
+            let outside_maze = new_coord.x < 0
+                || new_coord.x >= self.width as i32
+                || new_coord.y < 0
+                || new_coord.y >= self.height as i32;
+
+            if outside_maze {
+                return false;
+            }
+
+            let idx = coord_to_idx(new_coord.as_uvec2(), self.width);
+            let next_cell = self.cells[idx];
+            if next_cell.visited {
+                return false;
+            }
+
+            true
+        })
+        .collect::<Vec<Direction>>();
+
+        if directions.is_empty() {
+            self.stack.pop();
+            let new_coord = *self.stack.last().unwrap();
+            return Step {
+                from_coord: current_coord,
+                to_coord: new_coord,
+                opend_walls: false,
+            };
+        }
+
+        let r = rand::random_range(0..directions.len());
+        let direction = directions[r];
+
+        let new_coord = (current_coord.as_ivec2() + direction.to_coord()).as_uvec2();
+
+        self.stack.push(new_coord);
+
+        Step {
+            from_coord: current_coord,
+            to_coord: new_coord,
+            opend_walls: true,
+        }
+    }
+
+    fn mark_current_cell(&mut self) {
+        let current_coord = self.stack.last().unwrap();
+        let idx = coord_to_idx(*current_coord, self.width);
+        self.cells[idx].visited = true;
+    }
+
+    fn open_walls(&mut self, step: Step) {
+        let width = self.width;
+        let direction = step.direction();
+        match direction {
+            Direction::Up => {
+                self.cells
+                    .get_mut(coord_to_idx(step.from_coord, width))
+                    .as_mut()
+                    .unwrap()
+                    .walls
+                    .up
+                    .take();
+                self.cells
+                    .get_mut(coord_to_idx(step.to_coord, width))
+                    .as_mut()
+                    .unwrap()
+                    .walls
+                    .down
+                    .take();
+            }
+
+            Direction::Down => {
+                self.cells
+                    .get_mut(coord_to_idx(step.from_coord, width))
+                    .as_mut()
+                    .unwrap()
+                    .walls
+                    .down
+                    .take();
+                self.cells
+                    .get_mut(coord_to_idx(step.to_coord, width))
+                    .as_mut()
+                    .unwrap()
+                    .walls
+                    .up
+                    .take();
+            }
+
+            Direction::Left => {
+                self.cells
+                    .get_mut(coord_to_idx(step.from_coord, width))
+                    .as_mut()
+                    .unwrap()
+                    .walls
+                    .left
+                    .take();
+                self.cells
+                    .get_mut(coord_to_idx(step.to_coord, width))
+                    .as_mut()
+                    .unwrap()
+                    .walls
+                    .right
+                    .take();
+            }
+
+            Direction::Right => {
+                self.cells
+                    .get_mut(coord_to_idx(step.from_coord, width))
+                    .as_mut()
+                    .unwrap()
+                    .walls
+                    .right
+                    .take();
+                self.cells
+                    .get_mut(coord_to_idx(step.to_coord, width))
+                    .as_mut()
+                    .unwrap()
+                    .walls
+                    .left
+                    .take();
+            }
+        }
     }
 
     fn complete(&self) -> bool {
-        self.stack.is_empty()
+        self.cells[0].visited && self.stack.len() == 1
     }
 }
 
@@ -180,7 +346,7 @@ fn reset_maze(mut commands: Commands, maze_config: Res<MazeConfig>, maze: Option
     let mut maze = Maze {
         cells: Vec::new(),
         width: maze_config.width,
-        _height: maze_config.height,
+        height: maze_config.height,
         stack: vec![UVec2::ZERO],
     };
 
@@ -201,7 +367,7 @@ fn spawn_cell(commands: &mut Commands, x: f32, y: f32) -> Cell {
     let up = commands
         .spawn((
             Sprite {
-                color: palettes::basic::MAROON.into(),
+                color: palettes::basic::BLACK.into(),
                 custom_size: Some(Vec2 {
                     x: CELL_SIZE as f32,
                     y: 2.0,
@@ -219,7 +385,7 @@ fn spawn_cell(commands: &mut Commands, x: f32, y: f32) -> Cell {
     let down = commands
         .spawn((
             Sprite {
-                color: palettes::basic::MAROON.into(),
+                color: palettes::basic::BLACK.into(),
                 custom_size: Some(Vec2 {
                     x: CELL_SIZE as f32,
                     y: 2.0,
@@ -237,7 +403,7 @@ fn spawn_cell(commands: &mut Commands, x: f32, y: f32) -> Cell {
     let left = commands
         .spawn((
             Sprite {
-                color: palettes::basic::MAROON.into(),
+                color: palettes::basic::BLACK.into(),
                 custom_size: Some(Vec2 {
                     x: 2.0,
                     y: CELL_SIZE as f32,
@@ -255,7 +421,7 @@ fn spawn_cell(commands: &mut Commands, x: f32, y: f32) -> Cell {
     let right = commands
         .spawn((
             Sprite {
-                color: palettes::basic::MAROON.into(),
+                color: palettes::basic::BLACK.into(),
                 custom_size: Some(Vec2 {
                     x: 2.0,
                     y: CELL_SIZE as f32,
@@ -274,7 +440,7 @@ fn spawn_cell(commands: &mut Commands, x: f32, y: f32) -> Cell {
         .spawn((
             Sprite {
                 color: palettes::basic::AQUA.into(),
-                custom_size: Some(Vec2::splat((CELL_SIZE - 1) as f32)),
+                custom_size: Some(Vec2::splat(CELL_SIZE as f32)),
                 ..Default::default()
             },
             Transform::from_translation(Vec3 { x, y, z: 0.0 }),
@@ -300,29 +466,33 @@ fn update(
     maze_config: Res<MazeConfig>,
     mut cells: Query<&mut Sprite>,
 ) {
+    if maze.complete() {
+        return;
+    }
+
     let should_step = match maze_config.solving_mode {
         SolvingMode::Paused => false,
         SolvingMode::Running => true,
         SolvingMode::Stepping => input.just_pressed(KeyCode::Space),
     };
 
-    if maze.complete() {
+    // let previous_cell = maze.current_cell();
+
+    let step = if should_step {
+        maze.step()
+    } else {
         return;
-    }
+    };
 
-    let previous_cell = maze.current_cell();
+    // let current_cell = maze.current_cell();
 
-    let mut direction = None;
+    let width = maze.width;
+    let previous_cell = maze.cells[coord_to_idx(step.from_coord, width)];
+    let current_cell = maze.cells[coord_to_idx(step.to_coord, width)];
 
-    if should_step {
-        direction = maze.step();
-    }
-
-    let current_cell = maze.current_cell();
-
-    if let Some(direction) = direction {
+    if step.opend_walls {
         #[rustfmt::skip]
-        match direction {
+        match step.direction() {
             Direction::Up => {
                 commands.entity(previous_cell.walls.up.unwrap()).despawn();
                 commands.entity(current_cell.walls.down.unwrap()).despawn();
@@ -340,10 +510,12 @@ fn update(
                 commands.entity(current_cell.walls.left.unwrap()).despawn();
             }
         };
+
+        maze.open_walls(step);
     }
 
-    cells.get_mut(current_cell.entity).unwrap().color = palettes::basic::BLUE.into();
     cells.get_mut(previous_cell.entity).unwrap().color = palettes::basic::FUCHSIA.into();
+    cells.get_mut(current_cell.entity).unwrap().color = palettes::basic::BLUE.into();
 }
 
 fn pan_and_zoom(
@@ -384,10 +556,10 @@ fn toggle_pause(input: Res<ButtonInput<KeyCode>>, mut maze_config: ResMut<MazeCo
 }
 
 fn coord_to_idx(coord: UVec2, width: usize) -> usize {
-    coord.x as usize * width + coord.y as usize
+    coord.y as usize * width + coord.x as usize
 }
 
-fn idx_to_coord(idx: usize, width: usize) -> UVec2 {
+fn _idx_to_coord(idx: usize, width: usize) -> UVec2 {
     UVec2 {
         x: (idx / width) as u32,
         y: (idx % width) as u32,

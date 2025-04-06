@@ -4,5 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bevy = { version = "0.15.2", features = ["dynamic_linking"] }
+# bevy = { version = "0.15.2", features = ["dynamic_linking"] }
+bevy = "0.15.2"
 bevy_egui = "0.31.0"
+rand = "0.9.0"
+getrandom = { version = "0.3", features = ["wasm_js"]}
+
+[target.wasm32-unknown-unknown]
+runner = "wasm-server-runner"
